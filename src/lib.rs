@@ -2,14 +2,13 @@
 
 use pluggable_interrupt_os::vga_buffer::{BUFFER_WIDTH, BUFFER_HEIGHT, plot, ColorCode, Color, plot_num, plot_str};
 use pc_keyboard::{DecodedKey, KeyCode};
-use rand::{Rng, SeedableRng};
+use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand::RngCore;
 
 // Mostly from Dr. Ferrer in class 3/13 and 3/15
 
-const SHOOT_FREQ: isize = 20;
-const ADD_SHOOTER_FREQ: isize = 250;
+const ADD_SHOOTER_FREQ: isize = 20;
 const MOVE_SHOOT_FREQ: isize = 5;
 
 const WALLS: &str = "################################################################################
@@ -55,13 +54,16 @@ pub struct Game {
     // From https://stackoverflow.com/questions/67627335/how-do-i-use-the-rand-crate-without-the-standard-library
     rng: SmallRng,
     status: Status,
+    active_shooters: isize,
+    drawn_proj: isize,
 }
 
 impl Game {
     pub fn new() -> Self {
         Self {player: Player::new(), walls: Walls::new(WALLS), tick_count: 0, 
             shooters: [Shooter::new(); 100], projectiles: [Projectile::new(); 1000], 
-            proj_count: 0, shot_count: 0, rng: SmallRng::seed_from_u64(6), status: Status::Normal}
+            proj_count: 0, shot_count: 0, rng: SmallRng::seed_from_u64(6), status: Status::Normal, 
+            active_shooters: 0, drawn_proj: 50}
     }
 
     pub fn key(&mut self, key: DecodedKey) {
@@ -113,14 +115,16 @@ impl Game {
         self.proj_count = 0;
         self.shot_count = 0;
         self.rng = SmallRng::seed_from_u64(6);
+        self.active_shooters = 0;
+        self.drawn_proj = 50;
     }
 
-    pub fn add_proj(&mut self) {
+    pub fn add_proj_count(&mut self) {
         self.proj_count += 1;
-        self.proj_count %= 999;
+        self.proj_count %= 250;
     }
 
-    pub fn add_shot(&mut self) {
+    pub fn add_shot_count(&mut self) {
         self.shot_count += 1;
         self.shot_count %= 99;
     }
@@ -128,45 +132,56 @@ impl Game {
     pub fn tick(&mut self) {
         if self.tick_count % ADD_SHOOTER_FREQ == 0 {
             let nx = 1 + self.rng.next_u32() as usize % (BUFFER_WIDTH - 1);
-            let ny = 1 + self.rng.next_u32() as usize % (BUFFER_HEIGHT - 1);
-            self.shooters[self.shot_count as usize].move_to(nx, ny);
-            self.add_shot();
+            self.shooters[self.shot_count as usize].move_to(nx, 3);
+            self.add_shot_count();
+            self.active_shooters += 1;
         }
         self.tick_count += 1;
-        if self.tick_count % SHOOT_FREQ == 0 {
-
-        }
         if self.tick_count % MOVE_SHOOT_FREQ == 0 {
-
+            for i in 0..self.active_shooters {
+                if self.shooters[i as usize].x > 2 {
+                    let x_dir = self.rng.next_u32() as usize % 2;
+                    if x_dir == 0 {
+                        self.shooters[i as usize].move_to(self.shooters[i as usize].x-1, self.shooters[i as usize].y+1);
+                    } else {
+                        self.shooters[i as usize].move_to(self.shooters[i as usize].x+1, self.shooters[i as usize].y+1);
+                    }
+                } else {
+                    self.shooters[i as usize].move_to(self.shooters[i as usize].x+1, self.shooters[i as usize].y+1);
+                }
+            }
         }
         self.walls.draw();
         plot('*', self.player.x, self.player.y, ColorCode::new(Color::Green, Color::Black));
-        for shot in self.shooters {
-            if shot.x < 80 && shot.y < 25 {
-                shot.draw();
-                self.projectiles[self.proj_count as usize] = shot.shoot_down();
-                self.add_proj();
-                self.projectiles[self.proj_count as usize] = shot.shoot_left();
-                self.add_proj();
-                self.projectiles[self.proj_count as usize] = shot.shoot_up();
-                self.add_proj();
-                self.projectiles[self.proj_count as usize] = shot.shoot_right();
-                self.add_proj();
+        for shootr in self.shooters {
+            if shootr.x < 80 && shootr.y < 25 {
+                shootr.draw();
+                self.projectiles[self.proj_count as usize] = shootr.shoot_down();
+                self.add_proj_count();
+                self.projectiles[self.proj_count as usize] = shootr.shoot_left();
+                self.add_proj_count();
+                self.projectiles[self.proj_count as usize] = shootr.shoot_up();
+                self.add_proj_count();
+                self.projectiles[self.proj_count as usize] = shootr.shoot_right();
+                self.add_proj_count();
             }
         }
-        for mut proj in self.projectiles {
-            if proj.x < 80 && proj.y < 25 {
-                proj.momentum(self.walls);
+        if self.proj_count < 50 {
+            for i in 0..self.proj_count {
+                if self.projectiles[i as usize].x < 79 && self.projectiles[i as usize].y < 24 {
+                    self.projectiles[i as usize].draw();
+                }
+                if self.player.proj_collision(&self.projectiles[i as usize]) {
+                    self.status = Status::Over;
+                }
+                
             }
-        }
-        for proj in self.projectiles {
-            if proj.x < 80 && proj.y < 25 {
-                proj.draw();
-            }
-        }
-        for proj in self.projectiles {
-            if proj.x < 80 && proj.y < 25 {
-                if self.player.proj_collision(&proj) {
+        } else {
+            for i in self.proj_count-self.drawn_proj..self.proj_count {
+                if self.projectiles[i as usize].x < 79 && self.projectiles[i as usize].y < 24 {
+                    self.projectiles[i as usize].draw();
+                }
+                if self.player.proj_collision(&self.projectiles[i as usize]) {
                     self.status = Status::Over;
                 }
             }
@@ -232,24 +247,31 @@ pub struct Projectile {
 
 impl Projectile {
     pub fn new() -> Self {
-        Self {x: 100, y: 100, dir: 0}
+        Self {x: 100 , y: 100, dir: 0}
     }
 
     pub fn draw(&self) {
         plot('X', self.x, self.y, ColorCode::new(Color::Yellow, Color::Black));
     }
 
-    pub fn momentum(&mut self, walls: Walls) {
-        if self.dir == 0 && !walls.occupied(self.x+1, self.y){
+    pub fn move_to(&mut self, x: usize, y: usize) {
+        self.x = x;
+        self.y = y;
+    }
+
+    pub fn change_dir(&mut self, dir: usize) {
+        self.dir = dir;
+    }
+
+    pub fn momentum(&mut self) {
+        if self.dir == 0 {
             self.x += 1;
-        } else if self.dir == 1 && !walls.occupied(self.x, self.y+1){
+        } else if self.dir == 1 {
             self.y += 1;
-        } else if self.dir == 2 && !walls.occupied(self.x-1, self.y){
+        } else if self.dir == 2 {
             self.x -= 1;
-        } else if !walls.occupied(self.x, self.y-1){
-            self.y -= 1;
         } else {
-            self.remove();
+            self.y -= 1;
         }
     }
 
@@ -286,16 +308,28 @@ impl Shooter {
     }
 
     pub fn shoot_right(&self) -> Projectile {
-        Projectile { x: (self.x + 1), y: (self.y), dir: (0) }
+        let mut proj = Projectile::new();
+        proj.move_to(self.x + 1, self.y);
+        proj.change_dir(0);
+        proj
     }
     pub fn shoot_down(&self) -> Projectile {
-        Projectile { x: (self.x), y: (self.y + 1), dir: (1) }
+        let mut proj = Projectile::new();
+        proj.move_to(self.x, self.y + 1);
+        proj.change_dir(1);
+        proj
     }
     pub fn shoot_left(&self) -> Projectile {
-        Projectile { x: (self.x - 1), y: (self.y), dir: (2) }
+        let mut proj = Projectile::new();
+        proj.move_to(self.x - 1, self.y);
+        proj.change_dir(2);
+        proj
     }
     pub fn shoot_up(&self) -> Projectile {
-        Projectile { x: (self.x), y: (self.y - 1), dir: (3) }
+        let mut proj = Projectile::new();
+        proj.move_to(self.x, self.y - 1);
+        proj.change_dir(3);
+        proj
     }
 
     pub fn draw(&self) {
@@ -351,97 +385,3 @@ impl Player {
         self.x += 1;
     }
 }
-
-// #![cfg_attr(not(test), no_std)]
-
-// use bare_metal_modulo::{ModNumC, MNum, ModNumIterator};
-// use pluggable_interrupt_os::vga_buffer::{BUFFER_WIDTH, BUFFER_HEIGHT, plot, ColorCode, Color, is_drawable};
-// use pc_keyboard::{DecodedKey, KeyCode};
-// use num::traits::SaturatingAdd;
-
-// #[derive(Copy,Debug,Clone,Eq,PartialEq)]
-// pub struct LetterMover {
-//     letters: [char; BUFFER_WIDTH],
-//     num_letters: ModNumC<usize, BUFFER_WIDTH>,
-//     next_letter: ModNumC<usize, BUFFER_WIDTH>,
-//     col: ModNumC<usize, BUFFER_WIDTH>,
-//     row: ModNumC<usize, BUFFER_HEIGHT>,
-//     dx: ModNumC<usize, BUFFER_WIDTH>,
-//     dy: ModNumC<usize, BUFFER_HEIGHT>
-// }
-
-// impl LetterMover {
-//     pub fn new() -> Self {
-//         LetterMover {
-//             letters: ['A'; BUFFER_WIDTH],
-//             num_letters: ModNumC::new(1),
-//             next_letter: ModNumC::new(1),
-//             col: ModNumC::new(BUFFER_WIDTH / 2),
-//             row: ModNumC::new(BUFFER_HEIGHT / 2),
-//             dx: ModNumC::new(0),
-//             dy: ModNumC::new(0)
-//         }
-//     }
-
-//     fn letter_columns(&self) -> impl Iterator<Item=usize> {
-//         ModNumIterator::new(self.col)
-//             .take(self.num_letters.a())
-//             .map(|m| m.a())
-//     }
-
-//     pub fn tick(&mut self) {
-//         self.clear_current();
-//         self.update_location();
-//         self.draw_current();
-//     }
-
-//     fn clear_current(&self) {
-//         for x in self.letter_columns() {
-//             plot(' ', x, self.row.a(), ColorCode::new(Color::Black, Color::Black));
-//         }
-//     }
-
-//     fn update_location(&mut self) {
-//         self.col += self.dx;
-//         self.row += self.dy;
-//     }
-
-//     fn draw_current(&self) {
-//         for (i, x) in self.letter_columns().enumerate() {
-//             plot(self.letters[i], x, self.row.a(), ColorCode::new(Color::Cyan, Color::Black));
-//         }
-//     }
-
-//     pub fn key(&mut self, key: DecodedKey) {
-//         match key {
-//             DecodedKey::RawKey(code) => self.handle_raw(code),
-//             DecodedKey::Unicode(c) => self.handle_unicode(c)
-//         }
-//     }
-
-//     fn handle_raw(&mut self, key: KeyCode) {
-//         match key {
-//             KeyCode::ArrowLeft => {
-//                 self.dx -= 1;
-//             }
-//             KeyCode::ArrowRight => {
-//                 self.dx += 1;
-//             }
-//             KeyCode::ArrowUp => {
-//                 self.dy -= 1;
-//             }
-//             KeyCode::ArrowDown => {
-//                 self.dy += 1;
-//             }
-//             _ => {}
-//         }
-//     }
-
-//     fn handle_unicode(&mut self, key: char) {
-//         if is_drawable(key) {
-//             self.letters[self.next_letter.a()] = key;
-//             self.next_letter += 1;
-//             self.num_letters = self.num_letters.saturating_add(&ModNumC::new(1));
-//         }
-//     }
-// }
